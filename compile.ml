@@ -4,6 +4,7 @@ open Phases
 open Exprs
 open Assembly
 open Errors
+open Graph
 
 module StringSet = Set.Make(String)
 
@@ -49,6 +50,23 @@ let err_CALL_ARITY_ERR   = 15L
 let dummy_span = (Lexing.dummy_pos, Lexing.dummy_pos);;
 
 let first_six_args_registers = [RDI; RSI; RDX; RCX; R8; R9]
+let caller_saved_regs : arg list =
+  [ Reg RDI
+  ; Reg RSI
+  ; Reg RDX
+  ; Reg RCX
+  ; Reg R8
+  ; Reg R9
+  ; Reg R10
+  ]
+;;
+
+let callee_saved_regs : arg list =
+  [ Reg R12
+  ; Reg R14
+  ; Reg RBX
+  ]
+;;
 let heap_reg = R15
 let scratch_reg = R11
 
@@ -699,13 +717,28 @@ let anf (p : tag program) : unit aprogram =
   helpP p
 ;;
 
+(* IMPLEMENT THIS FROM YOUR PREVIOUS ASSIGNMENT *)
 let free_vars (e: 'a aexpr) : string list =
-  raise (NotYetImplemented "Implement free_vars for expressions")
+  raise (NotYetImplemented "Implement free_vars for racer")
+;;
+
+let free_vars_cache (prog: 'a aprogram): StringSet.t aprogram =
+  raise (NotYetImplemented "Implement free_vars_cache for racer")
 ;;
 
 (* IMPLEMENT THIS FROM YOUR PREVIOUS ASSIGNMENT *)
 let naive_stack_allocation (prog: tag aprogram) : tag aprogram * arg name_envt name_envt =
   raise (NotYetImplemented "Implement stack allocation for racer")
+;;
+
+(* IMPLEMENT THE BELOW *)
+
+let interfere (e : StringSet.t aexpr) (live : StringSet.t) : grapht =
+  raise (NotYetImplemented "Generate interference graphs from expressions for racer")
+;;
+
+let color_graph (g: grapht) (init_env: arg name_envt) : arg name_envt =
+  raise (NotYetImplemented "Implement graph coloring for racer")
 ;;
 
 let register_allocation (prog: tag aprogram) : tag aprogram * arg name_envt name_envt =

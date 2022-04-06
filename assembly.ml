@@ -20,6 +20,7 @@ type reg =
   | R13
   | R14
   | R15
+  | RBX
   | CL
 
 type size =
@@ -94,6 +95,7 @@ let r_to_asm (r : reg) : string =
   | R13 -> "R13"
   | R14 -> "R14"
   | R15 -> "R15"
+  | RBX -> "RBX"
   | CL  -> "CL"
 
 let rec arg_to_asm (a : arg) : string =
