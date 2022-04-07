@@ -920,7 +920,13 @@ let run_if should_run f =
   if should_run then f else no_op_phase
 ;;
 
-let compile_to_string ?no_builtins:(no_builtins=false) (prog : sourcespan program pipeline) : string pipeline =
+let pick_alloc_strategy (strat : alloc_strategy) =
+  match strat with
+  | Naive -> naive_stack_allocation
+  | Register -> register_allocation
+;;
+
+let compile_to_string ?no_builtins:(no_builtins=false) (alloc_strat : alloc_strategy) (prog : sourcespan program pipeline) : string pipeline =
   prog
   |> (add_err_phase well_formed is_well_formed)
   |> (run_if (not no_builtins) (add_phase add_natives add_native_lambdas))
@@ -928,6 +934,6 @@ let compile_to_string ?no_builtins:(no_builtins=false) (prog : sourcespan progra
   |> (add_phase tagged tag)
   |> (add_phase renamed rename_and_tag)
   |> (add_phase anfed (fun p -> atag (anf p)))
-  |> (add_phase locate_bindings naive_stack_allocation)
+  |> (add_phase locate_bindings (pick_alloc_strategy alloc_strat))
   |> (add_phase result compile_prog)
 ;;

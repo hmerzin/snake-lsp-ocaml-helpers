@@ -90,6 +90,11 @@ and 'a aexpr = (* anf expressions *)
 and 'a aprogram =
   | AProgram of 'a aexpr * 'a
 
+type alloc_strategy =
+  | Register
+  | Naive
+;;
+
 
 let map_opt f v =
   match v with None -> None | Some v -> Some (f v)

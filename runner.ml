@@ -52,16 +52,16 @@ let parse_file (name : string) input_file : sourcespan program =
   let lexbuf = Lexing.from_channel input_file in
   parse name lexbuf
 
-let compile_string_to_string ?no_builtins:(no_builtins=false) (name : string) (input : string) : string pipeline =
+let compile_string_to_string ?no_builtins:(no_builtins=false) (alloc_strat : alloc_strategy) (name : string) (input : string) : string pipeline =
   (Ok(input, [])
    |> add_phase source (fun x -> x)
    |> add_err_phase parsed (fun input ->
           try Ok(parse_string name input)
           with err -> Error([err])))
-  |> compile_to_string ~no_builtins:no_builtins;;
+  |> compile_to_string ~no_builtins:no_builtins alloc_strat;;
 
-let compile_file_to_string ?no_builtins:(no_builtins=false) (name : string) (input_file : string) : string pipeline =
-  compile_string_to_string ~no_builtins:no_builtins name (string_of_file input_file)
+let compile_file_to_string ?no_builtins:(no_builtins=false) (alloc_strat: alloc_strategy) (name : string) (input_file : string) : string pipeline =
+  compile_string_to_string ~no_builtins:no_builtins alloc_strat name (string_of_file input_file)
 
 let make_tmpfiles (name : string) (std_input : string) =
   let (stdin_read, stdin_write) = pipe() in
@@ -141,8 +141,8 @@ let run_asm (asm_string : string) (out : string) (runner : string -> string list
 
 
 
-let run p out runner no_builtins args std_input =
-  let maybe_asm_string = compile_to_string ~no_builtins:no_builtins (Ok(p, [])) in    
+let run p out runner no_builtins args std_input alloc_strat =
+  let maybe_asm_string = compile_to_string ~no_builtins:no_builtins alloc_strat (Ok(p, [])) in    
   match maybe_asm_string with
   | Error(errs, _) -> Error(ExtString.String.join "\n" (print_errors errs))
   | Ok(asm_string, _) ->
@@ -160,7 +160,12 @@ let run_anf p out runner args std_input =
      run_asm asm_string out runner args std_input
 
 
-type compile_opts = { valgrind: bool; no_builtins: bool; heap_size: int option }
+type compile_opts = {
+  valgrind: bool;
+  no_builtins: bool;
+  heap_size: int option;
+  alloc_strat: alloc_strategy
+}
 
 let starts_with target src =
   String.length src >= String.length target &&
@@ -180,9 +185,16 @@ let read_options filename : compile_opts =
   let heap_size = match (List.find_opt (starts_with "heap ") opts) with
                          | None -> None
                          | Some str -> Some (Scanf.sscanf str "heap %d" (fun h -> h)) in
+  let alloc_strat = match (List.find_opt (starts_with "alloc ") opts) with
+                           | None -> Naive
+                           | Some "alloc naive" -> Naive
+                           | Some "alloc register" -> Register
+                           | Some s ->
+                             raise (InternalCompilerError (sprintf "'%s' is not a valid allocation strategy, use naive or register" s)) in
   { valgrind = List.mem "valgrind" opts;
     no_builtins = List.mem "no_builtins" opts;
-    heap_size = heap_size
+    heap_size = heap_size;
+    alloc_strat = alloc_strat
   }
 ;;
 
@@ -195,12 +207,12 @@ let parse_args (argsfile: string) (opts: compile_opts) : string list =
     | None -> []
 ;;
 
-let test_run ?no_builtins:(no_builtins=false) ?args:(args=[]) ?std_input:(std_input="") program_str outfile expected ?cmp:(cmp=(=)) test_ctxt =
+let test_run ?no_builtins:(no_builtins=false) ?args:(args=[]) ?std_input:(std_input="") alloc_strat program_str outfile expected ?cmp:(cmp=(=)) test_ctxt =
   let full_outfile = "output/" ^ outfile in
   let result =
     try
       let program = parse_string outfile program_str in
-      run program full_outfile run_no_vg no_builtins args std_input
+      run program full_outfile run_no_vg no_builtins args std_input alloc_strat
     with err -> Error(Printexc.to_string err) in
   assert_equal (Ok(expected ^ "\n")) result ~cmp:cmp ~printer:result_printer
 
@@ -209,22 +221,22 @@ let test_run_anf ?args:(args=[]) ?std_input:(std_input="") program_anf outfile e
   let result = run_anf program_anf full_outfile run_no_vg args std_input in
   assert_equal (Ok(expected ^ "\n")) result ~cmp:cmp ~printer:result_printer
 
-let test_run_valgrind ?no_builtins:(no_builtins=false) ?args:(args=[]) ?std_input:(std_input="") program_str outfile expected ?cmp:(cmp=(=))  test_ctxt =
+let test_run_valgrind ?no_builtins:(no_builtins=false) ?args:(args=[]) ?std_input:(std_input="") alloc_strat program_str outfile expected ?cmp:(cmp=(=)) test_ctxt =
   let full_outfile = "output/" ^ outfile in
   let result =
     try
       let program = parse_string outfile program_str in
-      run program full_outfile run_vg no_builtins args std_input
+      run program full_outfile run_vg no_builtins args std_input alloc_strat
     with err -> Error(Printexc.to_string err) in
   assert_equal (Ok(expected ^ "\n")) result ~cmp:cmp ~printer:result_printer
 
-let test_err ?no_builtins:(no_builtins=false) ?args:(args=[]) ?std_input:(std_input="") program_str outfile errmsg ?vg:(vg=false) test_ctxt =
+let test_err ?no_builtins:(no_builtins=false) ?args:(args=[]) ?std_input:(std_input="") alloc_strat program_str outfile errmsg ?vg:(vg=false) test_ctxt =
   let full_outfile = "output/" ^ outfile in
   let runner = if vg then run_vg else run_no_vg in
   let result =
     try
       let program = parse_string outfile program_str in
-      run program full_outfile runner no_builtins args std_input
+      run program full_outfile runner no_builtins args std_input alloc_strat
     with err -> Error(Printexc.to_string err) in
   assert_equal
     (Error(errmsg))
@@ -237,11 +249,11 @@ let test_err ?no_builtins:(no_builtins=false) ?args:(args=[]) ?std_input:(std_in
     )
 
 
-let test_run_input filename ?args:(args=[]) expected test_ctxt =
-  test_run ~args:args ~std_input:"" (string_of_file ("input/" ^ filename)) filename expected test_ctxt
+let test_run_input filename ?args:(args=[]) alloc_strat expected test_ctxt =
+  test_run ~args:args ~std_input:"" alloc_strat (string_of_file ("input/" ^ filename)) filename expected test_ctxt
 
-let test_err_input filename ?args:(args=[]) expected test_ctxt =
-  test_err ~args:args ~std_input:"" (string_of_file ("input/" ^ filename)) filename expected test_ctxt
+let test_err_input filename ?args:(args=[]) alloc_strat expected test_ctxt =
+  test_err ~args:args ~std_input:"" alloc_strat (string_of_file ("input/" ^ filename)) filename expected test_ctxt
 
 let chomp str =
   if str = "" then str 
@@ -261,7 +273,8 @@ let test_does_run filename test_ctxt =
   let output = if Sys.file_exists outfile then chomp (string_of_file outfile) else "" in
   let input = if Sys.file_exists infile then (string_of_file infile) else "" in
   let runner = if opts.valgrind then test_run_valgrind else test_run in
-  runner ~args:args ~std_input:input prog ("do_pass/" ^ filename) output test_ctxt
+  let alloc_strat = opts.alloc_strat in
+  runner ~args:args ~std_input:input alloc_strat prog ("do_pass/" ^ filename) output test_ctxt
     ~cmp: (fun check result ->
       match check, result with
       | Ok(expect_msg), Ok(actual_message) -> String.exists actual_message expect_msg
@@ -279,7 +292,8 @@ let test_does_err filename test_ctxt =
   let args = parse_args argsfile opts in
   let err = if Sys.file_exists errfile then chomp (string_of_file errfile) else "" in
   let input = if Sys.file_exists infile then (string_of_file infile) else "" in
-  test_err ~no_builtins:opts.no_builtins ~args:args ~std_input:input prog ("do_err/" ^ filename) err ~vg:opts.valgrind test_ctxt
+  let alloc_strat = opts.alloc_strat in
+  test_err ~no_builtins:opts.no_builtins ~args:args ~std_input:input alloc_strat prog ("do_err/" ^ filename) err ~vg:opts.valgrind test_ctxt
 
 
 
@@ -293,12 +307,13 @@ let test_doesnt_run filename test_ctxt =
   let args = parse_args argsfile opts in
   let input = if Sys.file_exists infile then (string_of_file infile) else "" in
   let runner = if opts.valgrind then run_vg else run_no_vg in
+  let alloc_strat = opts.alloc_strat in
 
   let full_outfile = "output/dont_pass" ^ filename in
   let result =
     try
       let program = parse_string filename prog in
-      run program full_outfile runner opts.no_builtins args input
+      run program full_outfile runner opts.no_builtins args input alloc_strat
     with err -> Error(Printexc.to_string err) in
   match result with
   | Ok(unexpected) ->
@@ -316,12 +331,13 @@ let test_doesnt_err filename test_ctxt =
   let args = parse_args argsfile opts in
   let input = if Sys.file_exists infile then (string_of_file infile) else "" in
   let runner = if opts.valgrind then run_vg else run_no_vg in
+  let alloc_strat = opts.alloc_strat in
 
   let full_outfile = "output/dont_err" ^ filename in
   let result =
     try
       let program = parse_string filename prog in
-      run program full_outfile runner opts.no_builtins args input
+      run program full_outfile runner opts.no_builtins args input alloc_strat
     with err -> Error(Printexc.to_string err) in
   match result with
   | Ok _ -> assert_bool (sprintf "Program %s currently runs (as expected for now)" filename) true
