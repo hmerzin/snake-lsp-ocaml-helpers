@@ -7,13 +7,14 @@ open Exprs
 open Phases
 open Errors
 
-let t name program input expected = name>::test_run ~args:[] ~std_input:input program name expected;;
+let t name program input expected = name>::test_run ~args:[] ~std_input:input Naive program name expected;;
+let tr name program input expected = name>::test_run ~args:[] ~std_input:input Register program name expected;;
 let ta name program input expected = name>::test_run_anf ~args:[] ~std_input:input program name expected;;
-let tgc name heap_size program input expected = name>::test_run ~args:[string_of_int heap_size] ~std_input:input program name expected;;
-let tvg name program input expected = name>::test_run_valgrind ~args:[] ~std_input:input program name expected;;
-let tvgc name heap_size program input expected = name>::test_run_valgrind ~args:[string_of_int heap_size] ~std_input:input program name expected;;
-let terr name program input expected = name>::test_err ~args:[] ~std_input:input program name expected;;
-let tgcerr name heap_size program input expected = name>::test_err ~args:[string_of_int heap_size] ~std_input:input program name expected;;
+let tgc name heap_size program input expected = name>::test_run ~args:[string_of_int heap_size] ~std_input:input Naive program name expected;;
+let tvg name program input expected = name>::test_run_valgrind ~args:[] ~std_input:input Naive program name expected;;
+let tvgc name heap_size program input expected = name>::test_run_valgrind ~args:[string_of_int heap_size] ~std_input:input Naive program name expected;;
+let terr name program input expected = name>::test_err ~args:[] ~std_input:input Naive program name expected;;
+let tgcerr name heap_size program input expected = name>::test_err ~args:[string_of_int heap_size] ~std_input:input Naive program name expected;;
 let tanf name program input expected = name>::fun _ ->
   assert_equal expected (anf (tag program)) ~printer:string_of_aprogram;;
 
