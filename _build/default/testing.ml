@@ -43,103 +43,6 @@ let get_startpos (pos : sourcespan) =
   | p, _ -> p.pos_lnum, p.pos_bol
 ;;
 
-(* let rec name_for_range (range : range) (expr : sourcespan expr) : string option =
-  match expr with
-  | ELet(bindings, body, _) -> help_bindings bindings range
-  
-  and help_bindings (bindings: sourcespan binding list) (range : range) : string option =
-  match bindings with
-  | [] -> None
-  | binding::rest -> (match help_binding binding range with 
-  | Some (name) -> Some(name)
-  | None -> help_bindings rest range
-  )
-
-  and help_binding (binding : sourcespan binding) (range : range) : string option =
-  match binding with
-  |  *)
-
-(* let view_all_uses
-    (begin_ln : int)
-    (begin_bol : int)
-    (end_ln : int)
-    (end_bol : int)
-    (program : string)
-    : (posn * posn) list
-  =
-  let prog = parse_string "any" program in
-
-
-  let rec help (expr : sourcespan expr) (is_scoped : bool) (name : string) : posn * posn list
-    =
-    match expr with
-    | ELet (bindings_list, body, _) ->
-      let is_binding = List.map (fun binding -> binding_help binding) bindings_list in
-      []
-    | EId (name, pos) -> if name = name then [ get_startpos pos ] else []
-    | _ -> failwith "unimplimented"
-  and binding_help (binding : sourcespan binding) : bool * (posn * posn list) =
-    match binding with
-    | BName (n, _, p), _, _ -> n = name, get_startpos p
-    (* | BTuple(binds, _), _, _ *)
-    | _ -> failwith "error"
-    (* and binds_help (binds : sourcespan bind list) : bool * startpos = 
-  match binds with
-  |  *)
-  in
-  match prog with
-  | Program (_, expr, _) -> help expr false "" *)
-(* let view_all_uses
-    (begin_ln : int)
-    (begin_bol : int)
-    (end_ln : int)
-    (end_bol : int)
-    (program : string)
-    : range list
-  =
-  let prog = parse_string "any" program in
-  let rec help
-      (expr : sourcespan expr)
-      (declare_range : range)
-      (name : string)
-      (is_scoped : bool)
-      : range list
-    =
-    let r = begin_ln, begin_bol, end_ln, end_bol in
-    match expr with
-    | ELet (bindings_list, body, _) ->
-      let matches =
-        List.map (fun (bind, _, _) -> get_match_for_bind bind) bindings_list
-      in
-      let found =
-        List.fold_right (fun a b ->
-            match a, b with
-            | None, Some _ -> b
-            | Some _, None -> a
-            | Some _, Some _ -> b
-            | None, None -> None)
-      in
-      x
-  and get_match_for_bind (bind : sourcespan bind) ((sl, sc, el, ec) : range)
-      : string option
-    =
-    match bind with
-    | BName (n, _, (a, b)) ->
-      if a.pos_lnum = sl && a.pos_bol = sc && b.pos_lnum = el && b.pos_bol = ec
-      then Some n
-      else None
-    | BTuple (binds, ss) ->
-      List.map (fun bind -> get_match_for_bind bind (sl, sc, el, ec)) binds
-      |> List.fold_left
-           (fun op acc ->
-             match op with
-             | Some _ -> op
-             | None -> acc)
-           None
-    | BBlank _ -> None
-  in
-  match prog with
-  | Program (_, expr, _) -> help expr false "" *)
 let range_of_sourcespan ((start, _end) : sourcespan) : range =
   start.pos_lnum, start.pos_cnum, _end.pos_lnum, _end.pos_cnum
 ;;
@@ -198,9 +101,6 @@ let get_definition
       in
       let found_in_bindings = List.map (fun (_, v, _) -> help v env) bindings_list in
       find_some (found_in_env @ found_in_bindings @ [ help body (new_env @ env) ])
-      (* let found_in_bindings = List.map (fun (_, v, _) -> help v env) bindings_list in *)
-      (* find_some (found_in_env @ [ help body (new_env @ env) ]) *)
-      (* find_some [ help body env ] *)
     | EId (name, ss) ->
       if range_equals (range_of_sourcespan ss) r
       then (
@@ -210,8 +110,37 @@ let get_definition
       else None
     | EPrim1 (_, expr, _) -> help expr env
     | EPrim2 (_, expr1, expr2, _) -> find_some ([ help expr1 env ] @ [ help expr2 env ])
-    | _ -> None
-    | _ -> failwith "unimplemented"
+    | ESeq (expr1, expr2, _) -> find_some ([ help expr1 env ] @ [ help expr2 env ])
+    | ELetRec (bindings_list, body, _) ->
+      let new_env = env_for_bindings (List.map (fun (b, _, _) -> b) bindings_list) in
+      let found_in_env =
+        List.map
+          (fun (n, range) -> if range_equals range r then Some (n, r) else None)
+          new_env
+      in
+      let found_in_bindings =
+        List.map (fun (_, v, _) -> help v (new_env @ env)) bindings_list
+      in
+      find_some (found_in_env @ found_in_bindings @ [ help body (new_env @ env) ])
+    | ELambda (binds, body, _) ->
+      let new_env = env_for_bindings binds in
+      let found_in_env =
+        List.map
+          (fun (n, range) -> if range_equals range r then Some (n, r) else None)
+          new_env
+      in
+      find_some (found_in_env @ [ help body (new_env @ env) ])
+    | EApp (fn, args, _, _) ->
+      find_some ([ help fn env ] @ List.map (fun arg -> help arg env) args)
+    | EIf (c, t, e, _) -> find_some ([ help c env ] @ [ help t env ] @ [ help e env ])
+    | ETuple (exprs, _) -> find_some (List.map (fun e -> help e env) exprs)
+    | EGetItem (e1, e2, _) -> find_some ([ help e1 env ] @ [ help e2 env ])
+    | ESetItem (e1, e2, e3, _) ->
+      find_some ([ help e1 env ] @ [ help e2 env ] @ [ help e3 env ])
+    | ENumber _ -> None
+    | EBool _ -> None
+    | ENil _ -> None
+  (* | _ -> failwith "nah ah" *)
   and env_for_bindings (bind_list : sourcespan bind list) : (string * range) list =
     match bind_list with
     | BName (name, _, ss) :: rest ->
