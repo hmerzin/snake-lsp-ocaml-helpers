@@ -1,0 +1,21 @@
+{
+  "name": "final-project",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.ccs.neu.edu/cs4410/starter-racer",
+  "author": "Harry Merzin <hmerzin@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "test": "dune build && jest"
+  },
+  "dependencies": {
+    "@types/jest": "^27.4.1",
+    "jest": "^28.0.3"
+  },
+  "jest": {
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/_build/"
+    ]
+  }
+}
