@@ -225,39 +225,41 @@ let get_uses
     : range list
   =
   let prog = desugarP (parse_string "file" (Js.to_string program)) in
-  let rec help (expr : sourcespan expr) (env : (string * range) list) : range list =
-    let r = begin_ln, begin_col, end_ln, end_col in
+  let rec help (expr : sourcespan expr) (env : (string * range) list) (r : range)
+      : range list
+    =
+    (* let r = begin_ln, begin_col, end_ln, end_col in *)
     match expr with
     | ELet (bindings_list, body, _) ->
       let new_env = env_for_bindings (List.map (fun (b, _, _) -> b) bindings_list) in
       let uses_in_binds =
-        List.map (fun (_, v, _) -> help v env) bindings_list |> List.flatten
+        List.map (fun (_, v, _) -> help v env r) bindings_list |> List.flatten
       in
       printf "uses in binds: %s" (dump uses_in_binds);
-      uses_in_binds @ help body (new_env @ env)
+      uses_in_binds @ help body (new_env @ env) r
     | EId (name, ss) ->
       (match lookup name env with
       | Some range -> if range_equals r range then [ range_of_sourcespan ss ] else []
       | None -> [])
-    | EPrim1 (_, expr, _) -> help expr env
-    | EPrim2 (_, expr1, expr2, _) -> help expr1 env @ help expr2 env
+    | EPrim1 (_, expr, _) -> help expr env r
+    | EPrim2 (_, expr1, expr2, _) -> help expr1 env r @ help expr2 env r
     | ELambda (binds, body, _) ->
       let new_env = env_for_bindings binds in
-      help body (new_env @ env)
-    | ESeq (e1, e2, _) -> help e1 env @ help e2 env
-    | ETuple (exprs, _) -> List.map (fun e -> help e env) exprs |> List.flatten
-    | EGetItem (e1, e2, _) -> help e1 env @ help e2 env
-    | ESetItem (e1, e2, e3, _) -> help e1 env @ help e2 env @ help e3 env
+      help body (new_env @ env) r
+    | ESeq (e1, e2, _) -> help e1 env r @ help e2 env r
+    | ETuple (exprs, _) -> List.map (fun e -> help e env r) exprs |> List.flatten
+    | EGetItem (e1, e2, _) -> help e1 env r @ help e2 env r
+    | ESetItem (e1, e2, e3, _) -> help e1 env r @ help e2 env r @ help e3 env r
     | ELetRec (bindings_list, body, _) ->
       let new_env = env_for_bindings (List.map (fun (b, _, _) -> b) bindings_list) in
       let uses_in_binds =
-        List.map (fun (_, v, _) -> help v (new_env @ env)) bindings_list |> List.flatten
+        List.map (fun (_, v, _) -> help v (new_env @ env) r) bindings_list |> List.flatten
       in
       printf "uses in binds: %s" (dump uses_in_binds);
-      uses_in_binds @ help body (new_env @ env)
-    | EIf (c, t, e, _) -> help c env @ help t env @ help e env
+      uses_in_binds @ help body (new_env @ env) r
+    | EIf (c, t, e, _) -> help c env r @ help t env r @ help e env r
     | EApp (f, args, _, _) ->
-      help f env @ (List.map (fun arg -> help arg env) args |> List.flatten)
+      help f env r @ (List.map (fun arg -> help arg env r) args |> List.flatten)
     | ENumber _ -> []
     | EBool _ -> []
     | ENil _ -> []
@@ -278,8 +280,8 @@ let get_uses
         (* found a name for the given range *)
         if range_equals (range_of_sourcespan (dummy_pos, dummy_pos)) r
            (* handle case where name isn't yet bound *)
-        then help expr [ name, r ]
-        else help expr []
+        then help expr [ name, r ] r
+        else help expr [] r
       | None -> raise (Failure "no name for range" (* no name for given range *))
     in
     definition

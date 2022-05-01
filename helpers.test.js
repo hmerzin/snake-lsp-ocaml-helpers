@@ -53,4 +53,14 @@ x()`;
     const definition = helpers.getDefinition(2, 14, 2, 15, program);
     expect(definition).toStrictEqual([0, [0, 1, 4, 1, 5]]);
   });
+  it("Returns occurrences for unbound identifiers", () => {
+    const program = `let e = c in c + (let c = 8 in c == e)`;
+    const uses = helpers.viewAllUses(1, 8, 1, 9, program);
+    const uses1 = helpers.viewAllUses(1, 4, 1, 5, program);
+    expect(uses).toStrictEqual([
+      [0, 1, 8, 1, 9],
+      [0, 1, 13, 1, 14],
+    ]);
+    expect(uses1).toStrictEqual([[0, 1, 36, 1, 37]]);
+  });
 });
