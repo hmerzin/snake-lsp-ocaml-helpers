@@ -44,7 +44,10 @@ let get_startpos (pos : sourcespan) =
 ;;
 
 let range_of_sourcespan ((start, _end) : sourcespan) : range =
-  start.pos_lnum, start.pos_cnum, _end.pos_lnum, _end.pos_cnum
+  ( start.pos_lnum
+  , start.pos_cnum - start.pos_bol
+  , _end.pos_lnum
+  , _end.pos_cnum - _end.pos_bol )
 ;;
 
 let range_equals ((a1, b1, c1, d1) : range) ((a2, b2, c2, d2) : range) : bool =
@@ -78,6 +81,63 @@ let find_some (list : 'a option list) : 'a option =
   | None -> None
 ;;
 
+let rec desugarP (p : sourcespan program) =
+  match p with
+  | Program (decls, body, tag) ->
+    (* This particular desugaring will convert declgroups into ELetRecs *)
+    let merge_sourcespans ((s1, _) : sourcespan) ((_, s2) : sourcespan) : sourcespan =
+      s1, s2
+    in
+    let wrap_G g body =
+      (* match g with
+      | [] -> body
+      | f :: r ->
+        let span =
+          List.fold_left merge_sourcespans (get_tag_D f) (List.map get_tag_D r)
+        in *)
+      ELetRec (helpG g, body, get_tag_E body)
+    in
+    Program ([], List.fold_right wrap_G decls body, tag)
+
+and helpG g = List.map helpD g
+
+and helpD d =
+  match d with
+  | DFun (name, args, body, (a, b)) ->
+    let new_pos_start =
+      { pos_fname = a.pos_fname
+      ; pos_bol = a.pos_bol
+      ; pos_cnum = a.pos_cnum + 4
+      ; pos_lnum = a.pos_lnum
+      }
+    in
+    let new_pos_end =
+      { pos_fname = a.pos_fname
+      ; pos_bol = a.pos_bol
+      ; pos_cnum = a.pos_cnum + 4 + String.length name
+      ; pos_lnum = a.pos_lnum
+      }
+    in
+    let new_ss = new_pos_start, new_pos_end in
+    BName (name, false, new_ss), ELambda (args, body, (a, b)), (a, b)
+;;
+
+let rec string_of_binding_list (blist : sourcespan binding list) : string =
+  match blist with
+  | (BName (name, _, (a, b)), _, _) :: rest ->
+    String.concat
+      ""
+      [ name
+      ; ": "
+      ; sprintf "%d %d-%d %d" a.pos_lnum a.pos_cnum b.pos_lnum b.pos_cnum
+      ; " "
+      ; string_of_binding_list rest
+      ]
+  | _ -> ""
+;;
+
+(* | (BTuple(binds)) *)
+
 let get_definition
     (begin_ln : int)
     (begin_col : int)
@@ -86,7 +146,7 @@ let get_definition
     (program : Js.js_string Js.t)
     : (string * range) option
   =
-  let prog = parse_string "file" (Js.to_string program) in
+  let prog = desugarP (parse_string "file" (Js.to_string program)) in
   let r = begin_ln, begin_col, end_ln, end_col in
   let rec help (expr : sourcespan expr) (env : (string * range) list)
       : (string * range) option
@@ -151,10 +211,12 @@ let get_definition
   in
   match prog with
   (* | Program (_, expr, _) -> None *)
-  | Program (_, expr, _) -> help expr []
+  | Program (d, expr, ss) ->
+    (* failwith (string_of_program (Program (d, expr, ss))); *)
+    help expr []
 ;;
 
-let view_all_uses
+let get_uses
     (begin_ln : int)
     (begin_col : int)
     (end_ln : int)
@@ -162,7 +224,7 @@ let view_all_uses
     (program : Js.js_string Js.t)
     : range list
   =
-  let prog = parse_string "file" (Js.to_string program) in
+  let prog = desugarP (parse_string "file" (Js.to_string program)) in
   let rec help (expr : sourcespan expr) (env : (string * range) list) : range list =
     let r = begin_ln, begin_col, end_ln, end_col in
     match expr with
@@ -179,8 +241,26 @@ let view_all_uses
       | None -> [])
     | EPrim1 (_, expr, _) -> help expr env
     | EPrim2 (_, expr1, expr2, _) -> help expr1 env @ help expr2 env
-    | _ -> []
-    | _ -> failwith "unimplemented"
+    | ELambda (binds, body, _) ->
+      let new_env = env_for_bindings binds in
+      help body (new_env @ env)
+    | ESeq (e1, e2, _) -> help e1 env @ help e2 env
+    | ETuple (exprs, _) -> List.map (fun e -> help e env) exprs |> List.flatten
+    | EGetItem (e1, e2, _) -> help e1 env @ help e2 env
+    | ESetItem (e1, e2, e3, _) -> help e1 env @ help e2 env @ help e3 env
+    | ELetRec (bindings_list, body, _) ->
+      let new_env = env_for_bindings (List.map (fun (b, _, _) -> b) bindings_list) in
+      let uses_in_binds =
+        List.map (fun (_, v, _) -> help v (new_env @ env)) bindings_list |> List.flatten
+      in
+      printf "uses in binds: %s" (dump uses_in_binds);
+      uses_in_binds @ help body (new_env @ env)
+    | EIf (c, t, e, _) -> help c env @ help t env @ help e env
+    | EApp (f, args, _, _) ->
+      help f env @ (List.map (fun arg -> help arg env) args |> List.flatten)
+    | ENumber _ -> []
+    | EBool _ -> []
+    | ENil _ -> []
   and env_for_bindings (bind_list : sourcespan bind list) : (string * range) list =
     match bind_list with
     | BName (name, _, ss) :: rest ->
@@ -191,33 +271,18 @@ let view_all_uses
   in
   printf "viewing uses";
   match prog with
-  | Program (_, expr, _) -> help expr []
-;;
-
-let build_env (program : Js.js_string Js.t) : (string * sourcespan) list =
-  let prog = parse_string "any" (Js.to_string program) in
-  let rec help (expr : sourcespan expr) (env : (string * sourcespan) list)
-      : (string * sourcespan) list
-    =
-    match expr with
-    | ELet (bindings_list, body, ss) ->
-      let new_env = env_for_bindings (List.map (fun (b, _, _) -> b) bindings_list) in
-      let binds_env =
-        List.map (fun (_, v, _) -> help v env) bindings_list |> List.flatten
-      in
-      printf "binds_env: %s" (dump binds_env);
-      env @ binds_env @ help body env @ new_env
-    | _ -> []
-  and env_for_bindings (bind_list : sourcespan bind list) : (string * sourcespan) list =
-    match bind_list with
-    | BName (name, _, ss) :: rest -> env_for_bindings rest @ [ name, ss ]
-    | BTuple (binds, _) :: rest -> env_for_bindings rest @ env_for_bindings binds
-    | BBlank ss :: rest -> env_for_bindings rest @ [ "_", ss ]
-    | [] -> []
-  in
-  printf "viewing uses";
-  match prog with
-  | Program (_, expr, ss) -> help expr [ "prog", ss ]
+  | Program (_, expr, _) ->
+    let definition =
+      match get_definition begin_ln begin_col end_ln end_col program with
+      | Some (name, r) ->
+        (* found a name for the given range *)
+        if range_equals (range_of_sourcespan (dummy_pos, dummy_pos)) r
+           (* handle case where name isn't yet bound *)
+        then help expr [ name, r ]
+        else help expr []
+      | None -> raise (Failure "no name for range" (* no name for given range *))
+    in
+    definition
 ;;
 
 (* help expr [] *)
@@ -240,7 +305,7 @@ let _ =
            (program : Js.js_string Js.t) =
          Js.array
            (Array.of_list
-              (view_all_uses
+              (get_uses
                  (begin_ln : int)
                  (begin_bol : int)
                  (end_ln : int)
@@ -264,15 +329,5 @@ let _ =
          with
          | Some (_, b) -> Left b
          | None -> Right (Js.string "Couldn't find name")
-
-       method buildEnv (program : Js.js_string Js.t) =
-         Js.array
-           (Array.of_list
-              (List.map
-                 (fun (s, (a, b)) ->
-                   ( Js.string s
-                   , (a.pos_lnum, a.pos_bol, a.pos_cnum, b.pos_lnum, b.pos_bol, b.pos_cnum)
-                   ))
-                 (build_env (program : Js.js_string Js.t))))
     end)
 ;;
